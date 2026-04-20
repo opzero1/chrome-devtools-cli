@@ -18,14 +18,21 @@ pub async fn send_to_daemon(request: &DaemonRequest) -> Result<DaemonResponse> {
 }
 
 /// Spawn the daemon process in the background.
-pub fn spawn_daemon(ws_url: &str) -> Result<()> {
+pub fn spawn_daemon(ws_url: &str, idle_timeout: Option<DaemonIdleTimeout>) -> Result<()> {
     let exe = std::env::current_exe()?;
-    std::process::Command::new(&exe)
-        .args(["__daemon__", ws_url])
+    let mut command = std::process::Command::new(&exe);
+    command
+        .arg("__daemon__")
+        .arg(ws_url)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
+        .stderr(std::process::Stdio::null());
+
+    if let Some(timeout) = idle_timeout {
+        command.arg(timeout.to_string());
+    }
+
+    command.spawn()?;
     Ok(())
 }
 

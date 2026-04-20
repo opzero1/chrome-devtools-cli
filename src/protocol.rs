@@ -1,7 +1,76 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+pub const DAEMON_IDLE_TIMEOUT_ENV: &str = "CHROME_DEVTOOLS_DAEMON_IDLE_TIMEOUT";
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DaemonIdleTimeout {
+    Seconds(u64),
+    Never,
+}
+
+impl DaemonIdleTimeout {
+    pub const DEFAULT: Self = Self::Seconds(300);
+
+    pub fn parse(value: &str) -> anyhow::Result<Self> {
+        let normalized = value.trim().to_ascii_lowercase();
+        if normalized == "never" {
+            return Ok(Self::Never);
+        }
+
+        let unit_start = normalized
+            .find(|ch: char| !ch.is_ascii_digit())
+            .ok_or_else(|| anyhow::anyhow!("expected a unit suffix: s, m, h, or 'never'"))?;
+
+        let (amount_raw, unit) = normalized.split_at(unit_start);
+        if amount_raw.is_empty() || unit.is_empty() {
+            anyhow::bail!(
+                "invalid timeout '{value}', expected format like 30m, 1h, 300s, or never"
+            );
+        }
+
+        let amount: u64 = amount_raw
+            .parse()
+            .map_err(|_| anyhow::anyhow!("invalid timeout number '{amount_raw}'"))?;
+        if amount == 0 {
+            anyhow::bail!("idle timeout must be greater than zero, or use 'never'");
+        }
+
+        let seconds = match unit {
+            "s" => amount,
+            "m" => amount
+                .checked_mul(60)
+                .ok_or_else(|| anyhow::anyhow!("timeout too large"))?,
+            "h" => amount
+                .checked_mul(60 * 60)
+                .ok_or_else(|| anyhow::anyhow!("timeout too large"))?,
+            _ => anyhow::bail!("invalid timeout unit '{unit}', expected s, m, h, or 'never'"),
+        };
+
+        Ok(Self::Seconds(seconds))
+    }
+
+    pub fn as_duration(self) -> Option<Duration> {
+        match self {
+            Self::Seconds(seconds) => Some(Duration::from_secs(seconds)),
+            Self::Never => None,
+        }
+    }
+}
+
+impl std::fmt::Display for DaemonIdleTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Never => write!(f, "never"),
+            Self::Seconds(seconds) if seconds % 3600 == 0 => write!(f, "{}h", seconds / 3600),
+            Self::Seconds(seconds) if seconds % 60 == 0 => write!(f, "{}m", seconds / 60),
+            Self::Seconds(seconds) => write!(f, "{}s", seconds),
+        }
+    }
+}
 
 /// Request from CLI client to daemon.
 #[derive(Serialize, Deserialize, Debug)]
@@ -11,6 +80,8 @@ pub struct DaemonRequest {
     pub page: Option<usize>,
     pub target: Option<String>,
     pub json_output: bool,
+    #[serde(default)]
+    pub daemon_idle_timeout: Option<DaemonIdleTimeout>,
 }
 
 /// Response from daemon to CLI client.
@@ -49,4 +120,34 @@ pub async fn read_msg<R: AsyncReadExt + Unpin>(r: &mut R) -> anyhow::Result<Vec<
     let mut buf = vec![0u8; len];
     r.read_exact(&mut buf).await?;
     Ok(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DaemonIdleTimeout;
+    use std::time::Duration;
+
+    #[test]
+    fn parses_supported_timeout_values() {
+        assert_eq!(DaemonIdleTimeout::parse("30m").unwrap(), DaemonIdleTimeout::Seconds(1800));
+        assert_eq!(DaemonIdleTimeout::parse("1h").unwrap(), DaemonIdleTimeout::Seconds(3600));
+        assert_eq!(DaemonIdleTimeout::parse("300s").unwrap(), DaemonIdleTimeout::Seconds(300));
+        assert_eq!(DaemonIdleTimeout::parse("never").unwrap(), DaemonIdleTimeout::Never);
+    }
+
+    #[test]
+    fn rejects_invalid_timeout_values() {
+        assert!(DaemonIdleTimeout::parse("0m").is_err());
+        assert!(DaemonIdleTimeout::parse("30").is_err());
+        assert!(DaemonIdleTimeout::parse("15d").is_err());
+    }
+
+    #[test]
+    fn converts_to_duration_when_finite() {
+        assert_eq!(
+            DaemonIdleTimeout::Seconds(90).as_duration(),
+            Some(Duration::from_secs(90))
+        );
+        assert_eq!(DaemonIdleTimeout::Never.as_duration(), None);
+    }
 }

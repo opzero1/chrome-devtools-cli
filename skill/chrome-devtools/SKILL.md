@@ -82,6 +82,9 @@ chrome-devtools --target <name> resize 1280 720
 | `--ws-endpoint <url>` | Explicit WebSocket endpoint (overrides auto-connect) |
 | `--user-data-dir <path>` | Custom Chrome profile directory |
 | `--channel <ch>` | Chrome channel: stable / beta / canary / dev |
+| `--daemon-idle-timeout <value>` | Daemon idle timeout (`30m`, `1h`, `never`, or `Ns/Nm/Nh`) |
+
+Environment fallback: `CHROME_DEVTOOLS_DAEMON_IDLE_TIMEOUT`.
 
 ## Typical task pattern
 
@@ -97,5 +100,7 @@ Use `snapshot` before `screenshot` when trying to understand page structure — 
 ## Daemon behavior
 
 The binary automatically manages a background daemon that holds a persistent WebSocket connection to Chrome. Chrome prompts for DevTools access once; all subsequent commands reuse the connection silently. No manual daemon management is needed.
+
+Daemon idle timeout defaults to 5 minutes. Override it per command with `--daemon-idle-timeout` (for example: `30m`, `1h`, `never`) or via `CHROME_DEVTOOLS_DAEMON_IDLE_TIMEOUT`. If a daemon is already running, a new timeout value is adopted for future idle periods without a manual restart.
 
 To stop it manually: `pkill -f __daemon__`
