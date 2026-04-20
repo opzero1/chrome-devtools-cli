@@ -44,7 +44,7 @@ chrome-devtools navigate https://example.com
         │
         ├─ If no daemon → spawn one (background process)
         │   └─ Daemon connects to Chrome WebSocket (one-time approval)
-        │   └─ Listens on Unix socket, 5-min idle timeout
+        │   └─ Listens on Unix socket, configurable idle timeout (default 5m)
         │
         └─ Fallback → direct WebSocket connection (no daemon)
 ```
@@ -149,15 +149,33 @@ You can also use `--page <index>` for quick one-offs, or pass the raw hex target
 | `--ws-endpoint <url>` | Explicit WebSocket URL |
 | `--user-data-dir <path>` | Custom Chrome profile directory |
 | `--channel <ch>` | Chrome channel (stable/beta/canary/dev) |
+| `--daemon-idle-timeout <value>` | Daemon idle timeout (`30m`, `1h`, `never`, or `Ns/Nm/Nh`) |
+
+You can also set `CHROME_DEVTOOLS_DAEMON_IDLE_TIMEOUT` as an environment fallback.
+
+Examples:
+
+```bash
+# Keep daemon alive for 30 minutes of inactivity
+chrome-devtools --daemon-idle-timeout 30m list-pages
+
+# Keep daemon alive for 1 hour (env fallback)
+CHROME_DEVTOOLS_DAEMON_IDLE_TIMEOUT=1h chrome-devtools navigate https://example.com
+
+# Disable idle shutdown
+chrome-devtools --daemon-idle-timeout never snapshot
+```
 
 ## Daemon details
 
 - **Socket**: `/tmp/chrome-devtools-daemon.sock`
 - **PID file**: `/tmp/chrome-devtools-daemon.pid`
-- **Idle timeout**: 5 minutes (auto-exits, cleans up socket)
+- **Idle timeout**: 5 minutes by default (configurable via `--daemon-idle-timeout` or `CHROME_DEVTOOLS_DAEMON_IDLE_TIMEOUT`)
 - **Protocol**: Length-prefixed JSON over Unix socket
 - **Spawned by**: First CLI invocation (transparent to user)
 - **Kill manually**: `pkill -f __daemon__` or delete the socket
+
+If a daemon is already running, passing a new `--daemon-idle-timeout` updates it for future idle periods (no manual restart required).
 
 ## Source layout
 

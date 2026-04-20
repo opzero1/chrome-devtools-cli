@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Result};
-use std::time::Duration;
 use tokio::net::UnixListener;
 
 use crate::cdp::CdpClient;
@@ -7,10 +6,12 @@ use crate::commands;
 use crate::friendly;
 use crate::protocol::*;
 
-const IDLE_TIMEOUT: Duration = Duration::from_secs(300); // 5 minutes
-
-pub async fn run_daemon(ws_url: &str) -> Result<()> {
+pub async fn run_daemon(
+    ws_url: &str,
+    initial_idle_timeout: Option<DaemonIdleTimeout>,
+) -> Result<()> {
     let mut client = CdpClient::connect(ws_url).await?;
+    let mut idle_timeout = initial_idle_timeout.unwrap_or(DaemonIdleTimeout::DEFAULT);
 
     // Clean up stale socket
     let sock = socket_path();
@@ -23,10 +24,8 @@ pub async fn run_daemon(ws_url: &str) -> Result<()> {
 
     // Signal readiness by socket existence (it's already bound)
     loop {
-        let accept = tokio::time::timeout(IDLE_TIMEOUT, listener.accept()).await;
-
-        match accept {
-            Ok(Ok((mut stream, _))) => {
+        match accept_with_idle_timeout(&listener, idle_timeout).await {
+            Ok(Some((mut stream, _))) => {
                 let req_bytes = match read_msg(&mut stream).await {
                     Ok(b) => b,
                     Err(e) => {
@@ -48,18 +47,22 @@ pub async fn run_daemon(ws_url: &str) -> Result<()> {
                     }
                 };
 
+                if let Some(next_idle_timeout) = request.daemon_idle_timeout {
+                    idle_timeout = next_idle_timeout;
+                }
+
                 let response = handle_request(&mut client, &request).await;
 
                 if let Ok(resp_bytes) = serde_json::to_vec(&response) {
                     let _ = write_msg(&mut stream, &resp_bytes).await;
                 }
             }
-            Ok(Err(e)) => {
-                eprintln!("daemon: accept error: {e}");
-            }
-            Err(_) => {
+            Ok(None) => {
                 // Idle timeout — exit
                 break;
+            }
+            Err(e) => {
+                eprintln!("daemon: accept error: {e}");
             }
         }
     }
@@ -67,6 +70,23 @@ pub async fn run_daemon(ws_url: &str) -> Result<()> {
     let _ = std::fs::remove_file(&sock);
     let _ = std::fs::remove_file(pid_path());
     Ok(())
+}
+
+async fn accept_with_idle_timeout(
+    listener: &UnixListener,
+    idle_timeout: DaemonIdleTimeout,
+) -> std::result::Result<
+    Option<(tokio::net::UnixStream, tokio::net::unix::SocketAddr)>,
+    std::io::Error,
+> {
+    if let Some(duration) = idle_timeout.as_duration() {
+        return match tokio::time::timeout(duration, listener.accept()).await {
+            Ok(accept_result) => accept_result.map(Some),
+            Err(_) => Ok(None),
+        };
+    }
+
+    listener.accept().await.map(Some)
 }
 
 async fn handle_request(client: &mut CdpClient, req: &DaemonRequest) -> DaemonResponse {
@@ -85,7 +105,10 @@ async fn handle_request(client: &mut CdpClient, req: &DaemonRequest) -> DaemonRe
 }
 
 fn is_browser_level(cmd: &str) -> bool {
-    matches!(cmd, "list-pages" | "new-page" | "close-page" | "select-page")
+    matches!(
+        cmd,
+        "list-pages" | "new-page" | "close-page" | "select-page"
+    )
 }
 
 async fn execute_command(client: &mut CdpClient, req: &DaemonRequest) -> Result<String> {
@@ -145,11 +168,15 @@ async fn execute_command(client: &mut CdpClient, req: &DaemonRequest) -> Result<
             commands::evaluate::evaluate(client, &session_id, expr, req.json_output).await
         }
         "click" => {
-            let sel = args["selector"].as_str().ok_or(anyhow!("selector required"))?;
+            let sel = args["selector"]
+                .as_str()
+                .ok_or(anyhow!("selector required"))?;
             commands::input::click(client, &session_id, sel).await
         }
         "fill" => {
-            let sel = args["selector"].as_str().ok_or(anyhow!("selector required"))?;
+            let sel = args["selector"]
+                .as_str()
+                .ok_or(anyhow!("selector required"))?;
             let val = args["value"].as_str().ok_or(anyhow!("value required"))?;
             commands::input::fill(client, &session_id, sel, val).await
         }
@@ -162,12 +189,12 @@ async fn execute_command(client: &mut CdpClient, req: &DaemonRequest) -> Result<
             commands::input::press_key(client, &session_id, key).await
         }
         "hover" => {
-            let sel = args["selector"].as_str().ok_or(anyhow!("selector required"))?;
+            let sel = args["selector"]
+                .as_str()
+                .ok_or(anyhow!("selector required"))?;
             commands::input::hover(client, &session_id, sel).await
         }
-        "snapshot" => {
-            commands::snapshot::take_snapshot(client, &session_id, req.json_output).await
-        }
+        "snapshot" => commands::snapshot::take_snapshot(client, &session_id, req.json_output).await,
         "resize" => {
             let w = args["width"].as_u64().ok_or(anyhow!("width required"))? as u32;
             let h = args["height"].as_u64().ok_or(anyhow!("height required"))? as u32;

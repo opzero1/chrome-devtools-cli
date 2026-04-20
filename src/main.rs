@@ -6,7 +6,7 @@ mod daemon;
 mod friendly;
 mod protocol;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use serde_json::json;
 
@@ -38,6 +38,10 @@ struct Cli {
     /// Output as JSON
     #[arg(long, global = true)]
     json: bool,
+
+    /// Daemon idle timeout: 30m, 1h, 300s, or never
+    #[arg(long, global = true, value_name = "value")]
+    daemon_idle_timeout: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -132,7 +136,18 @@ async fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(|s| s.as_str()) == Some("__daemon__") {
         let ws_url = args.get(2).expect("daemon requires ws_url argument");
-        if let Err(e) = daemon::run_daemon(ws_url).await {
+        let initial_idle_timeout = match args.get(3) {
+            Some(raw) => match protocol::DaemonIdleTimeout::parse(raw) {
+                Ok(timeout) => Some(timeout),
+                Err(e) => {
+                    eprintln!("daemon error: invalid idle timeout '{raw}': {e}");
+                    std::process::exit(1);
+                }
+            },
+            None => None,
+        };
+
+        if let Err(e) = daemon::run_daemon(ws_url, initial_idle_timeout).await {
             eprintln!("daemon error: {e:#}");
             std::process::exit(1);
         }
@@ -146,29 +161,45 @@ async fn main() {
 }
 
 /// Build a DaemonRequest from parsed CLI args.
-fn build_request(cli: &Cli) -> DaemonRequest {
+fn build_request(
+    cli: &Cli,
+    daemon_idle_timeout: Option<protocol::DaemonIdleTimeout>,
+) -> DaemonRequest {
     let (command, args) = match &cli.command {
         Commands::ListPages => ("list-pages", json!({})),
-        Commands::Navigate { url, back, forward, reload } => (
+        Commands::Navigate {
+            url,
+            back,
+            forward,
+            reload,
+        } => (
             "navigate",
             json!({"url": url, "back": back, "forward": forward, "reload": reload}),
         ),
         Commands::NewPage { url } => ("new-page", json!({"url": url})),
         Commands::ClosePage { index } => ("close-page", json!({"index": index})),
         Commands::SelectPage { index } => ("select-page", json!({"index": index})),
-        Commands::Screenshot { output, format, full_page } => (
+        Commands::Screenshot {
+            output,
+            format,
+            full_page,
+        } => (
             "screenshot",
             json!({"output": output, "format": format, "full_page": full_page}),
         ),
         Commands::Evaluate { expression } => ("evaluate", json!({"expression": expression})),
         Commands::Click { selector } => ("click", json!({"selector": selector})),
-        Commands::Fill { selector, value } => ("fill", json!({"selector": selector, "value": value})),
+        Commands::Fill { selector, value } => {
+            ("fill", json!({"selector": selector, "value": value}))
+        }
         Commands::TypeText { text } => ("type-text", json!({"text": text})),
         Commands::PressKey { key } => ("press-key", json!({"key": key})),
         Commands::Hover { selector } => ("hover", json!({"selector": selector})),
         Commands::Snapshot => ("snapshot", json!({})),
         Commands::Resize { width, height } => ("resize", json!({"width": width, "height": height})),
-        Commands::WaitFor { text, timeout } => ("wait-for", json!({"text": text, "timeout": timeout})),
+        Commands::WaitFor { text, timeout } => {
+            ("wait-for", json!({"text": text, "timeout": timeout}))
+        }
     };
 
     DaemonRequest {
@@ -177,6 +208,7 @@ fn build_request(cli: &Cli) -> DaemonRequest {
         page: cli.page,
         target: cli.target.clone(),
         json_output: cli.json,
+        daemon_idle_timeout,
     }
 }
 
@@ -195,8 +227,34 @@ fn print_response(resp: &protocol::DaemonResponse) {
     }
 }
 
+fn resolve_daemon_idle_timeout(
+    cli_value: Option<&str>,
+) -> Result<Option<protocol::DaemonIdleTimeout>> {
+    if let Some(value) = cli_value {
+        return Ok(Some(protocol::DaemonIdleTimeout::parse(value)?));
+    }
+
+    match std::env::var(protocol::DAEMON_IDLE_TIMEOUT_ENV) {
+        Ok(value) => Ok(Some(protocol::DaemonIdleTimeout::parse(&value).map_err(
+            |e| {
+                anyhow!(
+                    "invalid {} value '{}': {e}",
+                    protocol::DAEMON_IDLE_TIMEOUT_ENV,
+                    value
+                )
+            },
+        )?)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(e) => Err(anyhow!(
+            "failed to read {}: {e}",
+            protocol::DAEMON_IDLE_TIMEOUT_ENV
+        )),
+    }
+}
+
 async fn run() -> Result<()> {
     let cli = Cli::parse();
+    let daemon_idle_timeout = resolve_daemon_idle_timeout(cli.daemon_idle_timeout.as_deref())?;
 
     let ws_url = browser::resolve_ws_url(
         cli.ws_endpoint.as_deref(),
@@ -204,7 +262,7 @@ async fn run() -> Result<()> {
         &cli.channel,
     )?;
 
-    let request = build_request(&cli);
+    let request = build_request(&cli, daemon_idle_timeout);
 
     // Try daemon first
     if let Ok(resp) = client::send_to_daemon(&request).await {
@@ -213,7 +271,7 @@ async fn run() -> Result<()> {
     }
 
     // Daemon not running — spawn it
-    client::spawn_daemon(&ws_url)?;
+    client::spawn_daemon(&ws_url, daemon_idle_timeout)?;
     client::wait_for_daemon().await?;
 
     // Retry via daemon
@@ -243,7 +301,10 @@ async fn run_direct(cli: &Cli, ws_url: &str) -> Result<String> {
 
     let is_browser = matches!(
         cli.command,
-        Commands::ListPages | Commands::NewPage { .. } | Commands::ClosePage { .. } | Commands::SelectPage { .. }
+        Commands::ListPages
+            | Commands::NewPage { .. }
+            | Commands::ClosePage { .. }
+            | Commands::SelectPage { .. }
     );
 
     if is_browser {
@@ -251,7 +312,9 @@ async fn run_direct(cli: &Cli, ws_url: &str) -> Result<String> {
             Commands::ListPages => commands::pages::list_pages(&mut client, cli.json).await,
             Commands::NewPage { url } => commands::pages::new_page(&mut client, url).await,
             Commands::ClosePage { index } => commands::pages::close_page(&mut client, *index).await,
-            Commands::SelectPage { index } => commands::pages::select_page(&mut client, *index).await,
+            Commands::SelectPage { index } => {
+                commands::pages::select_page(&mut client, *index).await
+            }
             _ => unreachable!(),
         };
     }
@@ -261,23 +324,63 @@ async fn run_direct(cli: &Cli, ws_url: &str) -> Result<String> {
     let session_id = client.attach_to_target(&target_id).await?;
 
     let result = match &cli.command {
-        Commands::Navigate { url, back, forward, reload } => {
-            commands::navigate::navigate(&mut client, &session_id, url.as_deref(), *back, *forward, *reload).await
+        Commands::Navigate {
+            url,
+            back,
+            forward,
+            reload,
+        } => {
+            commands::navigate::navigate(
+                &mut client,
+                &session_id,
+                url.as_deref(),
+                *back,
+                *forward,
+                *reload,
+            )
+            .await
         }
-        Commands::Screenshot { output, format, full_page } => {
-            commands::screenshot::take_screenshot(&mut client, &session_id, output.as_deref(), format, *full_page).await
+        Commands::Screenshot {
+            output,
+            format,
+            full_page,
+        } => {
+            commands::screenshot::take_screenshot(
+                &mut client,
+                &session_id,
+                output.as_deref(),
+                format,
+                *full_page,
+            )
+            .await
         }
         Commands::Evaluate { expression } => {
             commands::evaluate::evaluate(&mut client, &session_id, expression, cli.json).await
         }
-        Commands::Click { selector } => commands::input::click(&mut client, &session_id, selector).await,
-        Commands::Fill { selector, value } => commands::input::fill(&mut client, &session_id, selector, value).await,
-        Commands::TypeText { text } => commands::input::type_text(&mut client, &session_id, text).await,
-        Commands::PressKey { key } => commands::input::press_key(&mut client, &session_id, key).await,
-        Commands::Hover { selector } => commands::input::hover(&mut client, &session_id, selector).await,
-        Commands::Snapshot => commands::snapshot::take_snapshot(&mut client, &session_id, cli.json).await,
-        Commands::Resize { width, height } => commands::pages::resize(&mut client, &session_id, *width, *height).await,
-        Commands::WaitFor { text, timeout } => commands::pages::wait_for(&mut client, &session_id, text, *timeout).await,
+        Commands::Click { selector } => {
+            commands::input::click(&mut client, &session_id, selector).await
+        }
+        Commands::Fill { selector, value } => {
+            commands::input::fill(&mut client, &session_id, selector, value).await
+        }
+        Commands::TypeText { text } => {
+            commands::input::type_text(&mut client, &session_id, text).await
+        }
+        Commands::PressKey { key } => {
+            commands::input::press_key(&mut client, &session_id, key).await
+        }
+        Commands::Hover { selector } => {
+            commands::input::hover(&mut client, &session_id, selector).await
+        }
+        Commands::Snapshot => {
+            commands::snapshot::take_snapshot(&mut client, &session_id, cli.json).await
+        }
+        Commands::Resize { width, height } => {
+            commands::pages::resize(&mut client, &session_id, *width, *height).await
+        }
+        Commands::WaitFor { text, timeout } => {
+            commands::pages::wait_for(&mut client, &session_id, text, *timeout).await
+        }
         _ => unreachable!(),
     };
 
