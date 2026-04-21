@@ -1,0 +1,146 @@
+name: release-homebrew
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to publish to GitHub Releases and Homebrew
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  verify-release:
+    runs-on: ubuntu-latest
+    env:
+      TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.TAG_NAME }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate tag matches Cargo.toml version
+        run: |
+          cargo_version=$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          cargo = tomllib.loads(Path("Cargo.toml").read_text())
+          print(cargo["package"]["version"])
+          PY
+          )
+
+          if [ "v${cargo_version}" != "${TAG_NAME}" ]; then
+            echo "Tag ${TAG_NAME} does not match Cargo.toml version ${cargo_version}" >&2
+            exit 1
+          fi
+
+      - name: Verify release build
+        run: |
+          cargo check --locked
+          cargo test --locked
+
+  build-macos-binaries:
+    needs: verify-release
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            artifact_name: macos-arm64
+            asset_name: chrome-devtools-macos-arm64.zip
+          - runner: macos-13
+            artifact_name: macos-x86_64
+            asset_name: chrome-devtools-macos-x86_64.zip
+    env:
+      TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.TAG_NAME }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package archive
+        run: zip -j "${{ matrix.asset_name }}" target/release/chrome-devtools
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.asset_name }}
+
+  publish-release:
+    needs: build-macos-binaries
+    runs-on: ubuntu-latest
+    env:
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      REPOSITORY: ${{ github.repository }}
+      TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out default branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.DEFAULT_BRANCH }}
+
+      - name: Download packaged binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: macos-*
+          merge-multiple: true
+
+      - name: Create or update GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          generate_release_notes: true
+          overwrite_files: true
+          files: |
+            dist/chrome-devtools-macos-arm64.zip
+            dist/chrome-devtools-macos-x86_64.zip
+
+      - name: Compute archive shas
+        id: archives
+        run: |
+          echo "arm64=$(sha256sum dist/chrome-devtools-macos-arm64.zip | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "x86_64=$(sha256sum dist/chrome-devtools-macos-x86_64.zip | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Update Homebrew formula
+        run: |
+          python scripts/update_homebrew_formula.py \
+            --repository "${REPOSITORY}" \
+            --tag "${TAG_NAME}" \
+            --arm64-sha "${{ steps.archives.outputs.arm64 }}" \
+            --x86-64-sha "${{ steps.archives.outputs.x86_64 }}"
+
+      - name: Commit formula update
+        run: |
+          if git diff --quiet -- Formula/chrome-devtools.rb; then
+            echo "Formula already up to date"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/chrome-devtools.rb
+          git commit -m "Update Homebrew formula for ${TAG_NAME}"
+          git push origin "HEAD:${DEFAULT_BRANCH}"

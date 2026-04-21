@@ -1,12 +1,14 @@
 class ChromeDevtools < Formula
+  # Bootstrap formula until the fork publishes its first arm64/x86_64 release assets.
   desc "Chrome DevTools Protocol CLI — auto-connects to existing Chrome"
-  homepage "https://github.com/aeroxy/chrome-devtools-cli"
+  homepage "https://github.com/opzero1/chrome-devtools-cli"
   version "0.1.0"
+  license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/aeroxy/chrome-devtools-cli/releases/download/0.1.0/chrome-devtools-macos-arm64.zip"
-      sha256 "b3b179dc55ebcaa6994294fab0d3ea0bfe3b97e3686eb61bbd59fb6256e31d2c"
+      sha256 "18f63ab500200e8b5d6614a18dd2457cf7d36716e17e7fdb469d08bf9062323e"
     end
   end
 
@@ -15,6 +17,6 @@ class ChromeDevtools < Formula
   end
 
   test do
-    assert_match "chrome-devtools", shell_output("#{bin}/chrome-devtools --help")
+    assert_match "Chrome DevTools Protocol CLI", shell_output("#{bin}/chrome-devtools --help")
   end
 end

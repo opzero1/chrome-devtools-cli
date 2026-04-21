@@ -5,7 +5,7 @@ edition = "2021"
 description = "Chrome DevTools Protocol CLI — auto-connects to existing Chrome"
 authors = ["Aero <aero.windwalker@gmail.com>"]
 license = "MIT"
-repository = "https://github.com/aeroxy/chrome-devtools-cli"
+repository = "https://github.com/opzero1/chrome-devtools-cli"
 
 [[bin]]
 name = "chrome-devtools"
