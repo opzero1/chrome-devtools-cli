@@ -91,17 +91,48 @@ async fn accept_with_idle_timeout(
 
 async fn handle_request(client: &mut CdpClient, req: &DaemonRequest) -> DaemonResponse {
     match execute_command(client, req).await {
-        Ok(output) => DaemonResponse {
-            success: true,
-            output,
-            error: String::new(),
-        },
-        Err(e) => DaemonResponse {
-            success: false,
-            output: String::new(),
-            error: format!("{e:#}"),
-        },
+        Ok(output) => success_response(output),
+        Err(e) if crate::cdp::is_retryable_connection_error(&e) => {
+            match reconnect_client(req).await {
+                Ok(reconnected) => {
+                    *client = reconnected;
+                    match execute_command(client, req).await {
+                        Ok(output) => success_response(output),
+                        Err(retry_error) => error_response(retry_error),
+                    }
+                }
+                Err(reconnect_error) => error_response(reconnect_error.context(format!(
+                    "failed to reconnect daemon browser session after retryable error: {e:#}"
+                ))),
+            }
+        }
+        Err(e) => error_response(e),
     }
+}
+
+fn success_response(output: String) -> DaemonResponse {
+    DaemonResponse {
+        success: true,
+        output,
+        error: String::new(),
+    }
+}
+
+fn error_response(error: anyhow::Error) -> DaemonResponse {
+    DaemonResponse {
+        success: false,
+        output: String::new(),
+        error: format!("{error:#}"),
+    }
+}
+
+async fn reconnect_client(req: &DaemonRequest) -> Result<CdpClient> {
+    let ws_url = crate::browser::resolve_ws_url(
+        req.ws_endpoint.as_deref(),
+        req.user_data_dir.as_deref(),
+        &req.channel,
+    )?;
+    CdpClient::connect(&ws_url).await
 }
 
 fn is_browser_level(cmd: &str) -> bool {

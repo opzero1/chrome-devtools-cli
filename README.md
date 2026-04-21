@@ -35,13 +35,13 @@ chrome-devtools navigate https://example.com
         │   └─ If running → send command → get result
         │
         ├─ If no daemon → spawn one (background process)
-        │   └─ Daemon connects to Chrome WebSocket (one-time approval)
+        │   └─ Daemon connects to Chrome WebSocket (approval may appear here)
         │   └─ Listens on Unix socket, configurable idle timeout (default 5m)
         │
         └─ Fallback → direct WebSocket connection (no daemon)
 ```
 
-The daemon keeps a persistent WebSocket connection to Chrome, so the browser only prompts for DevTools access once. Subsequent commands reuse the connection.
+The daemon keeps a persistent WebSocket connection while it is alive, so repeated commands usually reuse the same connection. If the daemon restarts (idle timeout/crash) or the CLI falls back to direct mode, Chrome may prompt for DevTools access again.
 
 ## Prerequisites
 
@@ -63,9 +63,11 @@ By default, the CLI reads `DevToolsActivePort` from Chrome's user data directory
 
 Override with `--user-data-dir`, `--channel` (beta/canary/dev), or `--ws-endpoint`.
 
-## Page targeting
+## Target-first page workflow
 
 Every page-level command outputs a friendly target name like `[target:red-snake]`. This is a deterministic word-pair derived from Chrome's internal target ID — same page always gets the same name.
+
+For multi-step automation, treat `--target` as required after your first page-discovery command (`navigate` or `list-pages`).
 
 ```bash
 # Navigate — note the target name
@@ -78,7 +80,7 @@ chrome-devtools --target red-snake screenshot --output /tmp/page.png
 chrome-devtools --target red-snake evaluate "document.title"
 ```
 
-Without `--target`, commands default to page index 0, which may vary as Chrome reorders tabs. Always capture and reuse the target name.
+Without `--target`, commands default to page index 0, which may vary as Chrome reorders tabs. Use unpinned commands only for one-off checks; for workflows, always capture and reuse the target name.
 
 `list-pages` shows all pages with their friendly names:
 
@@ -189,14 +191,14 @@ src/
     └── snapshot.rs
 ```
 
-## Typical workflow
+## Typical workflow (target-first)
 
 ```bash
-# 1. Navigate — capture the [target:name]
+# 1. Discover/select the page and capture [target:name]
 chrome-devtools navigate https://example.com
-# [target:red-snake]
+# [target:red-snake] (save this)
 
-# 2. Understand the page
+# 2. From here on, always pin --target
 chrome-devtools --target red-snake snapshot
 chrome-devtools --target red-snake screenshot --output /tmp/page.png
 
@@ -209,6 +211,16 @@ chrome-devtools --target red-snake evaluate "document.title"
 ```
 
 Always pass `--target` from step 2 onward to stay on the same page.
+
+## Releasing
+
+Patch releases are tag-driven.
+
+1. Bump `Cargo.toml` and `Formula/chrome-devtools.rb` to the new patch version.
+2. Push a tag like `v0.1.2`.
+3. Let `.github/workflows/release.yml` upload `chrome-devtools-macos-arm64.zip` to the GitHub release.
+4. Compute the published zip `sha256` and replace the formula placeholder before testing the tap install.
+5. Run the brew install/test smoke flow against the published asset.
 
 ## Agent skill
 

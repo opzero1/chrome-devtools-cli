@@ -209,6 +209,9 @@ fn build_request(
         target: cli.target.clone(),
         json_output: cli.json,
         daemon_idle_timeout,
+        ws_endpoint: cli.ws_endpoint.clone(),
+        user_data_dir: cli.user_data_dir.clone(),
+        channel: cli.channel.clone(),
     }
 }
 
@@ -264,35 +267,62 @@ async fn run() -> Result<()> {
 
     let request = build_request(&cli, daemon_idle_timeout);
 
-    // Try daemon first
+    // Try daemon first.
     if let Ok(resp) = client::send_to_daemon(&request).await {
+        if resp.success {
+            print_response(&resp);
+            return Ok(());
+        }
+
+        if cdp::is_retryable_connection_error_message(&resp.error) {
+            eprintln!("Warning: daemon browser connection was stale, running directly");
+            return run_direct_and_print(&cli, &ws_url).await;
+        }
+
         print_response(&resp);
         return Ok(());
     }
 
-    // Daemon not running — spawn it
-    client::spawn_daemon(&ws_url, daemon_idle_timeout)?;
-    client::wait_for_daemon().await?;
+    // Daemon not running — try to spawn it, then fall back directly if startup fails.
+    if let Err(e) = client::spawn_daemon(&ws_url, daemon_idle_timeout) {
+        eprintln!("Warning: failed to spawn daemon ({e}), running directly");
+        return run_direct_and_print(&cli, &ws_url).await;
+    }
 
-    // Retry via daemon
+    if let Err(e) = client::wait_for_daemon().await {
+        eprintln!("Warning: daemon failed to become ready ({e}), running directly");
+        return run_direct_and_print(&cli, &ws_url).await;
+    }
+
+    // Retry via daemon.
     match client::send_to_daemon(&request).await {
         Ok(resp) => {
+            if !resp.success && cdp::is_retryable_connection_error_message(&resp.error) {
+                eprintln!(
+                    "Warning: daemon browser connection was stale after startup, running directly"
+                );
+                return run_direct_and_print(&cli, &ws_url).await;
+            }
+
             print_response(&resp);
             Ok(())
         }
         Err(e) => {
-            // Daemon failed — fall back to direct execution
             eprintln!("Warning: daemon unavailable ({e}), running directly");
-            let output = run_direct(&cli, &ws_url).await?;
-            if !output.is_empty() {
-                print!("{}", output);
-                if !output.ends_with('\n') {
-                    println!();
-                }
-            }
-            Ok(())
+            run_direct_and_print(&cli, &ws_url).await
         }
     }
+}
+
+async fn run_direct_and_print(cli: &Cli, ws_url: &str) -> Result<()> {
+    let output = run_direct(cli, ws_url).await?;
+    if !output.is_empty() {
+        print!("{}", output);
+        if !output.ends_with('\n') {
+            println!();
+        }
+    }
+    Ok(())
 }
 
 /// Direct execution without daemon (fallback).

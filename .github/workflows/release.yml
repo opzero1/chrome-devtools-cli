@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-macos-arm64:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package zip asset
+        run: |
+          mkdir -p dist
+          cp target/release/chrome-devtools dist/chrome-devtools
+          chmod +x dist/chrome-devtools
+          ditto -c -k --sequesterRsrc --keepParent dist/chrome-devtools chrome-devtools-macos-arm64.zip
+
+      - name: Print sha256
+        run: shasum -a 256 chrome-devtools-macos-arm64.zip
+
+      - name: Publish GitHub release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: chrome-devtools-macos-arm64.zip
+          generate_release_notes: true

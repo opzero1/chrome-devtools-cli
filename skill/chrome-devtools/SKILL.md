@@ -16,9 +16,11 @@ Chrome must have remote debugging enabled:
 
 The binary auto-connects by reading Chrome's `DevToolsActivePort` file — no WebSocket URL needed.
 
-## Core workflow
+## Target-first core workflow
 
 Every page-level command prints a `[target:word-pair]` line. Capture it and pass `--target` to all subsequent commands to stay on the same tab.
+
+For any multi-step task, do not run page-level commands without `--target` after the first discovery step (`navigate` or `list-pages`).
 
 ```bash
 # Step 1: navigate, capture target name
@@ -32,7 +34,7 @@ chrome-devtools --target red-snake click "#submit"
 chrome-devtools --target red-snake evaluate "document.title"
 ```
 
-Without `--target`, commands default to tab index 0, which may not be the right page if Chrome reorders tabs.
+Without `--target`, commands default to tab index 0, which may not be the right page if Chrome reorders tabs. Reserve unpinned commands for one-off probing only.
 
 ## Commands
 
@@ -86,10 +88,10 @@ chrome-devtools --target <name> resize 1280 720
 
 Environment fallback: `CHROME_DEVTOOLS_DAEMON_IDLE_TIMEOUT`.
 
-## Typical task pattern
+## Typical task pattern (target-first)
 
 1. `list-pages` — see what tabs are open
-2. `navigate <url>` — go to target, **note the `[target:name]`**
+2. `navigate <url>` or choose from `list-pages`, then **note the `[target:name]`**
 3. `--target name snapshot` — understand the page structure (accessibility tree is compact and token-efficient vs. a screenshot)
 4. `--target name click` / `fill` / `type-text` / `press-key` — interact
 5. `--target name evaluate` — extract data or verify state
@@ -99,7 +101,7 @@ Use `snapshot` before `screenshot` when trying to understand page structure — 
 
 ## Daemon behavior
 
-The binary automatically manages a background daemon that holds a persistent WebSocket connection to Chrome. Chrome prompts for DevTools access once; all subsequent commands reuse the connection silently. No manual daemon management is needed.
+The binary automatically manages a background daemon that holds a persistent WebSocket connection to Chrome. While that daemon stays up, repeated commands usually reuse the same connection. If the daemon is unavailable (startup failure, crash, or idle timeout), the CLI can run in direct mode and Chrome may ask for DevTools approval again.
 
 Daemon idle timeout defaults to 5 minutes. Override it per command with `--daemon-idle-timeout` (for example: `30m`, `1h`, `never`) or via `CHROME_DEVTOOLS_DAEMON_IDLE_TIMEOUT`. If a daemon is already running, a new timeout value is adopted for future idle periods without a manual restart.
 

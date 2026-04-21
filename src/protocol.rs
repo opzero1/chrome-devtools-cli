@@ -82,6 +82,16 @@ pub struct DaemonRequest {
     pub json_output: bool,
     #[serde(default)]
     pub daemon_idle_timeout: Option<DaemonIdleTimeout>,
+    #[serde(default)]
+    pub ws_endpoint: Option<String>,
+    #[serde(default)]
+    pub user_data_dir: Option<String>,
+    #[serde(default = "default_channel")]
+    pub channel: String,
+}
+
+fn default_channel() -> String {
+    "stable".to_string()
 }
 
 /// Response from daemon to CLI client.
