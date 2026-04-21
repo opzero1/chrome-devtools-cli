@@ -4,15 +4,12 @@ Rust CLI that connects to an existing Chrome browser via the DevTools Protocol. 
 
 ## Installation
 
-### Homebrew (macOS arm64 for now)
+### Homebrew (macOS)
 
 ```bash
 brew tap opzero1/chrome-devtools-cli
 brew install chrome-devtools
 ```
-
-Until the fork publishes its first Homebrew release asset, this tap bootstraps from the existing upstream arm64 binary.
-Intel support lands after running the `release-homebrew` GitHub Actions workflow for `v0.1.1` (or cutting a newer `v*` tag), which publishes fork-owned arm64/x86_64 assets and updates the formula.
 
 ### Build from source
 
