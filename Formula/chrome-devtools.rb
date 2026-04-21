@@ -7,7 +7,7 @@ class ChromeDevtools < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/opzero1/chrome-devtools-cli/releases/download/v#{version}/chrome-devtools-macos-arm64.zip"
-      sha256 "c1a4c4a7142935a87835ea0443c624a768998f79f984bdd21fb417236ad1ddd2"
+      sha256 "d96d78dd7401514bc609378085989b768426bcbe72d126f54cd94a3e428dd856"
     end
   end
 
