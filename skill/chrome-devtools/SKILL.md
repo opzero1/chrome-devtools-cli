@@ -1,6 +1,6 @@
 ---
 name: chrome-devtools
-description: This skill should be used when the user asks to "control Chrome", "automate the browser", "take a screenshot of a page", "click a button in Chrome", "navigate to a URL", "evaluate JavaScript in Chrome", "fill a form in the browser", "inspect a page", "interact with Chrome", or when any browser automation task is needed. Use this skill instead of MCP browser tools — it calls a lightweight local binary that is far more token-efficient.
+description: This skill should be used when the user asks to "control Chrome", "automate the browser", "take a screenshot of a page", "record a page as MP4", "click a button in Chrome", "navigate to a URL", "evaluate JavaScript in Chrome", "fill a form in the browser", "inspect a page", "interact with Chrome", or when any browser automation task is needed. Use this skill instead of MCP browser tools — it calls a lightweight local binary that is far more token-efficient.
 ---
 
 # Chrome DevTools CLI
@@ -15,6 +15,8 @@ Chrome must have remote debugging enabled:
 3. Enable the remote debugging server
 
 The binary auto-connects by reading Chrome's `DevToolsActivePort` file — no WebSocket URL needed.
+
+`record-video` also requires `ffmpeg` in PATH.
 
 ## Target-first core workflow
 
@@ -58,6 +60,22 @@ chrome-devtools --target <name> evaluate "document.title"
 chrome-devtools --target <name> snapshot   # Accessibility tree — use to understand page structure
 ```
 
+### Video Recording (requires ffmpeg)
+```bash
+# Record 5 seconds at defaults (12 fps, quality 80)
+chrome-devtools --target <name> record-video --output recording.mp4
+
+# Record 10 seconds at 24 fps with higher quality
+chrome-devtools --target <name> record-video --output demo.mp4 --duration 10 --fps 24 --quality 90
+
+# Cap resolution
+chrome-devtools --target <name> record-video --output small.mp4 --width 1280 --height 720
+```
+
+Flags: `--output/-o` (required), `--duration` (default 5s), `--fps` (default 12), `--quality` (default 80), `--width`, `--height`.
+
+The command is duration-based. It keeps the terminal busy until recording finishes. Press `Ctrl+C` to stop it early.
+
 ### Interaction
 ```bash
 chrome-devtools --target <name> click "#selector"
@@ -95,9 +113,10 @@ Environment fallback: `CHROME_DEVTOOLS_DAEMON_IDLE_TIMEOUT`.
 3. `--target name snapshot` — understand the page structure (accessibility tree is compact and token-efficient vs. a screenshot)
 4. `--target name click` / `fill` / `type-text` / `press-key` — interact
 5. `--target name evaluate` — extract data or verify state
-6. `--target name screenshot --output /tmp/result.png` — capture final state if needed
+6. `--target name screenshot --output /tmp/result.png` — capture a final still image if needed
+7. `--target name record-video --output /tmp/result.mp4` — record motion or timing-sensitive flows
 
-Use `snapshot` before `screenshot` when trying to understand page structure — it returns text, not an image, and costs far fewer tokens.
+Use `snapshot` before `screenshot` when trying to understand page structure — it returns text, not an image, and costs far fewer tokens. Use `record-video` only when motion matters.
 
 ## Daemon behavior
 

@@ -125,6 +125,46 @@ impl CdpClient {
         }
     }
 
+    /// Send a CDP message without waiting for a response.
+    /// Used for fire-and-forget acks (e.g. Page.screencastFrameAck).
+    pub async fn send_fire_and_forget(
+        &mut self,
+        method: &str,
+        params: Value,
+        session_id: Option<&str>,
+    ) -> Result<()> {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        let mut msg = json!({"id": id, "method": method});
+        if !params.is_null() && params != json!({}) {
+            msg["params"] = params;
+        }
+        if let Some(sid) = session_id {
+            msg["sessionId"] = json!(sid);
+        }
+
+        let text = serde_json::to_string(&msg)?;
+        self.write.send(Message::Text(text.into())).await?;
+        Ok(())
+    }
+
+    /// Read the next WebSocket message as parsed JSON.
+    /// Returns None on timeout, Some(value) on message, or Err on connection failure.
+    pub async fn read_next_message(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Result<Option<Value>> {
+        match tokio::time::timeout(timeout, self.read_text()).await {
+            Ok(Ok(text)) => {
+                let value: Value = serde_json::from_str(&text)?;
+                Ok(Some(value))
+            }
+            Ok(Err(e)) => Err(e),
+            Err(_) => Ok(None), // timeout
+        }
+    }
+
     async fn read_text(&mut self) -> Result<String> {
         loop {
             match self.read.next().await {
@@ -244,6 +284,25 @@ pub fn is_retryable_connection_error(error: &anyhow::Error) -> bool {
     is_retryable_connection_error_message(&format!("{error:#}"))
 }
 
+/// Compute the expected frame interval for a target FPS.
+pub fn frame_interval_ms(fps: u32) -> u64 {
+    if fps == 0 {
+        return 1000;
+    }
+    1000 / fps as u64
+}
+
+/// Check whether enough time has elapsed since `last_ms` to emit the next frame
+/// at the given FPS. Returns the updated timestamp if a frame should be emitted.
+pub fn should_emit_frame(last_ms: u64, now_ms: u64, fps: u32) -> Option<u64> {
+    let interval = frame_interval_ms(fps);
+    if now_ms >= last_ms + interval {
+        Some(now_ms)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::is_retryable_connection_error_message;
@@ -270,5 +329,37 @@ mod tests {
             "No page matching 'red-snake'"
         ));
         assert!(!is_retryable_connection_error_message("No page at index 3"));
+    }
+
+    use super::{frame_interval_ms, should_emit_frame};
+
+    #[test]
+    fn frame_interval_standard_fps() {
+        assert_eq!(frame_interval_ms(12), 83); // 1000/12 = 83
+        assert_eq!(frame_interval_ms(24), 41); // 1000/24 = 41
+        assert_eq!(frame_interval_ms(30), 33); // 1000/30 = 33
+        assert_eq!(frame_interval_ms(1), 1000);
+    }
+
+    #[test]
+    fn frame_interval_zero_fps_defaults() {
+        assert_eq!(frame_interval_ms(0), 1000);
+    }
+
+    #[test]
+    fn should_emit_frame_timing() {
+        // At 12 fps, interval is 83ms
+        assert!(should_emit_frame(0, 83, 12).is_some());
+        assert!(should_emit_frame(0, 82, 12).is_none());
+        assert!(should_emit_frame(0, 100, 12).is_some());
+        // After emitting at t=83, next frame at t=166
+        assert!(should_emit_frame(83, 165, 12).is_none());
+        assert!(should_emit_frame(83, 166, 12).is_some());
+    }
+
+    #[test]
+    fn should_emit_frame_same_timestamp() {
+        // Same timestamp as last emit — should not emit again
+        assert!(should_emit_frame(100, 100, 12).is_none());
     }
 }

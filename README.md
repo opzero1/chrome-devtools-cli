@@ -113,6 +113,7 @@ You can also use `--page <index>` for quick one-offs, or pass the raw hex target
 |---------|-------------|
 | `screenshot --output <path>` | Save screenshot to file |
 | `screenshot --full-page` | Capture full scrollable page |
+| `record-video --output <path>` | Record page to MP4 video (requires `ffmpeg`) |
 | `evaluate <expr>` | Run JavaScript, return result |
 | `snapshot` | Accessibility tree dump |
 
@@ -132,6 +133,32 @@ You can also use `--page <index>` for quick one-offs, or pass the raw hex target
 |---------|-------------|
 | `resize <w> <h>` | Set viewport size |
 | `wait-for <text> [--timeout ms]` | Wait for text to appear (default 30s) |
+
+### Video Recording
+
+Record the visible page to an MP4 file. Requires `ffmpeg` in PATH.
+
+```bash
+# Record 5 seconds at default settings (12 fps, quality 80)
+chrome-devtools --target red-snake record-video --output recording.mp4
+
+# Record 10 seconds at higher quality and frame rate
+chrome-devtools --target red-snake record-video --output demo.mp4 --duration 10 --fps 24 --quality 90
+
+# Cap resolution to 1280x720
+chrome-devtools --target red-snake record-video --output small.mp4 --width 1280 --height 720
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--output / -o` | (required) | Output MP4 file path |
+| `--duration` | `5` | Recording duration in seconds |
+| `--fps` | `12` | Target frames per second |
+| `--quality` | `80` | JPEG quality for screencast frames (1-100) |
+| `--width` | (none) | Max capture width |
+| `--height` | (none) | Max capture height |
+
+Install ffmpeg: `brew install ffmpeg` (macOS), `sudo apt install ffmpeg` (Ubuntu), or see [ffmpeg.org](https://ffmpeg.org/download.html).
 
 ## Global options
 
@@ -184,10 +211,11 @@ src/
 ├── friendly.rs     # Target ID → word-pair names
 └── commands/
     ├── navigate.rs
-    ├── pages.rs    # list/new/close/select/resize/wait-for
+    ├── pages.rs         # list/new/close/select/resize/wait-for
     ├── screenshot.rs
+    ├── record_video.rs  # screencast → ffmpeg MP4
     ├── evaluate.rs
-    ├── input.rs    # click/fill/type/press/hover
+    ├── input.rs         # click/fill/type/press/hover
     └── snapshot.rs
 ```
 

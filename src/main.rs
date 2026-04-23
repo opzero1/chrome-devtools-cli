@@ -128,6 +128,28 @@ enum Commands {
         #[arg(long, default_value_t = 30000)]
         timeout: u64,
     },
+
+    /// Record the page to an MP4 video (requires ffmpeg)
+    RecordVideo {
+        /// Output file path (e.g. recording.mp4)
+        #[arg(long, short)]
+        output: String,
+        /// Recording duration in seconds
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u64).range(1..))]
+        duration: u64,
+        /// Target frames per second
+        #[arg(long, default_value_t = 12, value_parser = clap::value_parser!(u32).range(1..=1000))]
+        fps: u32,
+        /// JPEG quality for screencast frames (1-100)
+        #[arg(long, default_value_t = 80, value_parser = clap::value_parser!(u32).range(1..=100))]
+        quality: u32,
+        /// Max capture width (optional, caps resolution)
+        #[arg(long)]
+        width: Option<u32>,
+        /// Max capture height (optional, caps resolution)
+        #[arg(long)]
+        height: Option<u32>,
+    },
 }
 
 #[tokio::main]
@@ -200,6 +222,24 @@ fn build_request(
         Commands::WaitFor { text, timeout } => {
             ("wait-for", json!({"text": text, "timeout": timeout}))
         }
+        Commands::RecordVideo {
+            output,
+            duration,
+            fps,
+            quality,
+            width,
+            height,
+        } => (
+            "record-video",
+            json!({
+                "output": output,
+                "duration": duration,
+                "fps": fps,
+                "quality": quality,
+                "width": width,
+                "height": height,
+            }),
+        ),
     };
 
     DaemonRequest {
@@ -410,6 +450,24 @@ async fn run_direct(cli: &Cli, ws_url: &str) -> Result<String> {
         }
         Commands::WaitFor { text, timeout } => {
             commands::pages::wait_for(&mut client, &session_id, text, *timeout).await
+        }
+        Commands::RecordVideo {
+            output,
+            duration,
+            fps,
+            quality,
+            width,
+            height,
+        } => {
+            let params = commands::record_video::RecordVideoParams {
+                output: output.clone(),
+                duration_secs: *duration,
+                fps: *fps,
+                quality: *quality,
+                max_width: *width,
+                max_height: *height,
+            };
+            commands::record_video::record_video(&mut client, &session_id, &params).await
         }
         _ => unreachable!(),
     };

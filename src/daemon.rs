@@ -236,6 +236,20 @@ async fn execute_command(client: &mut CdpClient, req: &DaemonRequest) -> Result<
             let timeout = args["timeout"].as_u64().unwrap_or(30000);
             commands::pages::wait_for(client, &session_id, text, timeout).await
         }
+        "record-video" => {
+            let output = args["output"]
+                .as_str()
+                .ok_or(anyhow!("output required"))?;
+            let params = commands::record_video::RecordVideoParams {
+                output: output.to_string(),
+                duration_secs: args["duration"].as_u64().unwrap_or(5),
+                fps: args["fps"].as_u64().unwrap_or(12) as u32,
+                quality: args["quality"].as_u64().unwrap_or(80) as u32,
+                max_width: args["width"].as_u64().map(|v| v as u32),
+                max_height: args["height"].as_u64().map(|v| v as u32),
+            };
+            commands::record_video::record_video(client, &session_id, &params).await
+        }
         _ => Err(anyhow!("Unknown command: {cmd}")),
     };
 
