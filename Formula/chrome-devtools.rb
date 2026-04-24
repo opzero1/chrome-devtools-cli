@@ -1,13 +1,13 @@
 class ChromeDevtools < Formula
   desc "Chrome DevTools Protocol CLI — auto-connects to existing Chrome"
   homepage "https://github.com/opzero1/chrome-devtools-cli"
-  version "0.1.3"
+  version "0.1.4"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/opzero1/chrome-devtools-cli/releases/download/v#{version}/chrome-devtools-macos-arm64.zip"
-      sha256 "bb324b526ed3c6a9f930221070471e9d002e92b84c937780d0b6947ffb9d8b40"
+      sha256 "e8470b3c2d69f048086eb8698af806de05ff7ef6ef6322c81af4dc1587987bee"
     end
   end
 
