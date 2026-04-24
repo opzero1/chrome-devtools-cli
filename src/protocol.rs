@@ -110,6 +110,10 @@ pub fn pid_path() -> PathBuf {
     std::env::temp_dir().join("chrome-devtools-daemon.pid")
 }
 
+pub fn log_path() -> PathBuf {
+    std::env::temp_dir().join("chrome-devtools-daemon.log")
+}
+
 /// Write a length-prefixed message to a stream.
 pub async fn write_msg<W: AsyncWriteExt + Unpin>(w: &mut W, data: &[u8]) -> anyhow::Result<()> {
     let len = (data.len() as u32).to_be_bytes();
@@ -139,10 +143,22 @@ mod tests {
 
     #[test]
     fn parses_supported_timeout_values() {
-        assert_eq!(DaemonIdleTimeout::parse("30m").unwrap(), DaemonIdleTimeout::Seconds(1800));
-        assert_eq!(DaemonIdleTimeout::parse("1h").unwrap(), DaemonIdleTimeout::Seconds(3600));
-        assert_eq!(DaemonIdleTimeout::parse("300s").unwrap(), DaemonIdleTimeout::Seconds(300));
-        assert_eq!(DaemonIdleTimeout::parse("never").unwrap(), DaemonIdleTimeout::Never);
+        assert_eq!(
+            DaemonIdleTimeout::parse("30m").unwrap(),
+            DaemonIdleTimeout::Seconds(1800)
+        );
+        assert_eq!(
+            DaemonIdleTimeout::parse("1h").unwrap(),
+            DaemonIdleTimeout::Seconds(3600)
+        );
+        assert_eq!(
+            DaemonIdleTimeout::parse("300s").unwrap(),
+            DaemonIdleTimeout::Seconds(300)
+        );
+        assert_eq!(
+            DaemonIdleTimeout::parse("never").unwrap(),
+            DaemonIdleTimeout::Never
+        );
     }
 
     #[test]
